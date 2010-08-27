@@ -1,0 +1,8 @@
+; $Id$
+name = Disease Lookup
+description = Use Sparql and semantic web to look up diseases
+version = 0.1
+core = 7.x
+package = RDF
+dependencies[] = rdfx
+files[] = diseaselookup.module

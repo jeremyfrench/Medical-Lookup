@@ -1,0 +1,67 @@
+<?php 
+// $Id$
+/**
+ * @file
+ * diseaselookup.install - Demonstrates a number of semantic web technologies by looking up a disease
+ * 
+ * @author Jeremy French <http://www.jeremyfrench.co.uk>
+ * @license GPL <http://creativecommons.org/licenses/GPL/2.0/>
+ * @package diseaselookup.module
+ */
+
+function diseaselookup_install() {
+  $t = get_t();
+  // Add a URI field, this may be all we need. Of type text
+
+  // get node type info
+  $diseaselookup_node_types = diseaselookup_node_info();
+  $disease_node_type = $diseaselookup_node_types['disease'];
+  $disease_node_type =  node_type_set_defaults($disease_node_type);
+
+  node_type_save($disease_node_type);
+  
+  $field = field_info_field('disease_uri');
+  if (empty($field)) {
+    
+    $field = array(
+      'field_name' => 'disease_uri',
+      'label' => $t('uri'),
+      'cardinality' => 1,
+      'type'        => 'text',
+      'default_formatter' => 'diseaselookup_uri',
+    );
+    field_create_field($field);
+  }
+  
+  
+  
+  $instance = field_info_instance('node', 'disease_uri', $disease_node_type->type);
+  if (empty($instance)) {
+ 
+    $instance = array(
+      'field_name' => 'disease_uri',
+      'entity_type' => 'node',
+      'bundle' => $disease_node_type->type,
+      'label' => $t('uri'),
+      'type' => 'text',
+      'display' => array(
+        'default' => array(
+          'type' => 'diseaselookup_uri',
+        ),
+      ),
+      'widget'      => array(
+        'type'    => 'text_textfield',
+      ),
+      
+    );
+    field_create_instance($instance);
+    
+  }
+}
+
+function diseaselookup_uninstall() {
+  // Delete the field and instance so they will be recreated on install
+  $instance = field_info_instance('node', 'disease_uri', 'disease');
+  field_delete_instance($instance);
+  field_delete_field('disease_uri');
+}

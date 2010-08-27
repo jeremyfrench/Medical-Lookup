@@ -1,0 +1,619 @@
+<?php
+// $Id$
+/**
+ * @file
+ * diseaselookup.module - Demonstrates a number of semantic web technologies by looking up a disease
+ *
+ * @author Jeremy French <http://www.jeremyfrench.co.uk>
+ * @license GPL <http://creativecommons.org/licenses/GPL/2.0/>
+ * @package diseaselookup.module
+ */
+
+define("DISEASELOOKUP_ENDPOINT", "http://nic.frost.tmg.co.uk:8880/sparql/");
+define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://DBpedia.org/sparql");
+//define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://nic.frost.tmg.co.uk:8880/proxy/dbpedia/");
+
+/**
+ * Implementation of hook_menu().
+ */
+function diseaselookup_menu() {
+  $items['diseaselookup'] = array(
+  'title' => 'Lookup Disease',
+  'page callback' => 'drupal_get_form',
+  'page arguments' => array('diseaselookup_search_form'),
+  'access arguments' => array('access content'),
+  );
+  $items['disease/%'] = array(
+  'page callback' => 'diseaselookup_lookup',
+  'page arguments' => array(1),
+  'access arguments' => array('access content'),
+  );
+  return $items;
+}
+
+/**
+ * Form for looking up diseases
+ */
+function diseaselookup_search_form() {
+  drupal_add_library('system', 'ui.autocomplete');
+  drupal_add_js(drupal_get_path("module", "diseaselookup") . '/js/diseaselookup.js');
+  $form['search_field'] = array('#type' => 'textfield' );
+ return $form;
+}
+
+/**
+ * Look up information on a disease
+ * @param string $disease_name
+ */
+function diseaselookup_lookup($disease_name) {
+  // Get the meshid if we can find one.
+
+  $meshid_query = "SELECT ?id ?pref_title WHERE { 
+  								   ?id <http://www.w3.org/2004/02/skos/core#prefLabel> ?pref_title.
+        						   { ?id <http://www.w3.org/2004/02/skos/core#prefLabel>  '" . $disease_name . "'@EN. }
+        						   UNION
+        	                       { ?id <http://www.w3.org/2004/02/skos/core#altLabel>  '" . $disease_name . "'@EN. } 
+        	                       UNION
+        	                       { ?id <http://www.w3.org/2004/02/skos/core#hiddenLabel>  '" . $disease_name . "'@EN. }
+        	    	              }";
+
+  $options = array(
+    'format' => 'application/sparql-results+xml',
+    'output' => 'xml',
+  );
+
+  
+  
+  
+  // This may be the prefered term check path 
+  $ts_results = rdfx_sparql_request($meshid_query, DISEASELOOKUP_ENDPOINT, $options);
+
+  $rows = $ts_results['result']['rows'];
+
+    // Item not found
+    if (empty ($rows)) {
+      drupal_not_found();
+    }
+
+    // Get Mesh ID 
+    $disease_uri = $ts_results['result']['rows'][0]['id'];
+    $mesh_found = preg_match('/(?<=\#).*$/', $disease_uri, $matches);
+    // Assume is allways found;
+    $mesh_id = $matches[0]; 
+    
+    
+    
+    // Check for the prefered term.
+    $pref_title = $ts_results['result']['rows'][0]['pref_title'];
+
+    // If this is not the prefered title redirect.
+    if ($pref_title != $disease_name) {
+      drupal_set_message(t("You searched for '" . check_plain($disease_name) . "', redirecting to the prefered term '" . $pref_title . "'."));
+      drupal_goto('disease/' . $pref_title);
+    }
+    
+    // If not present create node
+    diseaselookup_create_node($pref_title, $disease_uri);
+    drupal_goto('disease/' . $pref_title);
+    
+  
+  
+  
+}
+
+/**
+ * Programatically create a with the correct URI title and path for a disease node
+ * @param string $title
+ * @param string $uri
+ * @return the node object
+ */
+function diseaselookup_create_node($title, $uri) {
+  //TODO: check for duplicate.
+  $node = new stdClass();
+  $node->title = $title;
+  $node->language = LANGUAGE_NONE; // we could do these multi lingual.
+  $node->disease_uri['und'][0]['value'] = $uri;
+  $node->type = 'disease';
+  $node->path = array('alias' => "disease/" . $title);
+  node_save(&$node);
+  cache_clear_all();
+  
+  return $node;
+  
+}
+
+
+/**
+ * Implementation of hook_node_view().
+ */
+function diseaselookup_node_view($node, $view_mode) {
+  if ($node->type == "disease") {
+    $field_template =  
+     array(
+     '#theme' => 'field',
+     '#weight' => 0,
+     '#title' => 'dummy title',
+     '#field_translatable' => 0,  
+     '#label_display' => 'above',
+     '#field_name' => 'dummy_field',
+     '#field_type' => 'text',
+     '#entity_type' => 'node',
+     '#formatter' => 'text_default',
+     '#view_mode' => 'full',
+     '#language' => LANGUAGE_NONE,
+     '#object' => $node,
+     '#access' => TRUE,
+     '#bundle' => 'disease',
+    );
+    
+    //Get item details. 
+    $uri = $node->disease_uri['und']['0']['value'];
+    $describe_sparq = "describe <" . $node->disease_uri['und']['0']['value'] . ">";
+    $options = array(
+      'format' => 'application/sparql-results+xml',
+      'output' => 'xml',
+      );
+    preg_match("/\w+$/", $uri, $matches);
+    $mesh_id = $matches[0];
+    
+    // Output the meshid as field and hide URI
+    $mesh = $field_template;
+    $mesh['#field_name'] = "mesh";
+    $mesh['#title'] = "MESH id";
+    $mesh['#items'] = array(0);
+    $mesh[0] = array( '#markup' => $mesh_id);
+    $node->content['mesh'] = $mesh;
+    $node->content['disease_uri']['#access'] = FALSE;
+    
+    
+    $ts_results = rdfx_sparql_request($describe_sparq, DISEASELOOKUP_ENDPOINT, $options);
+    
+    // Broarder  
+    $broader_sparql = "SELECT ?pref_title WHERE {
+                             ?item <http://www.w3.org/2004/02/skos/core#prefLabel> ?pref_title.
+                             <" . $uri . "> <http://www.w3.org/2004/02/skos/core#broader> ?item.
+                             }";
+    $ts_results = rdfx_sparql_request($broader_sparql, DISEASELOOKUP_ENDPOINT, $options);
+    
+    
+      if (sizeof($ts_results['result']['rows']) > 0) {
+      $broader_terms = $field_template;
+      $broader_terms['#field_name'] = 'broader_terms';
+      $broader_terms['#title'] = 'More general medical conditions';
+      $broader_terms['#items'] = $ts_results['result']['rows'];
+      foreach ($ts_results['result']['rows'] as $key => $result) {
+        
+        // Todo work out how to use theme link here
+        $broader_terms[$key] = array(
+          '#markup' => l($result['pref_title'], 'disease/' . $result['pref_title']),
+        );
+      }
+    $node->content['broader_terms'] = $broader_terms;
+    }
+    
+    
+    
+  
+    // Narrower
+    $narrower_sparql = "SELECT ?pref_title WHERE {
+                             ?item <http://www.w3.org/2004/02/skos/core#prefLabel> ?pref_title.
+                             ?item <http://www.w3.org/2004/02/skos/core#broader> <" . $uri . ">.
+                             }";
+    
+    $ts_results = rdfx_sparql_request($narrower_sparql, DISEASELOOKUP_ENDPOINT, $options);
+  
+    
+    if (sizeof($ts_results['result']['rows']) > 0) {
+      $narrower_terms = $field_template;
+      $narrower_terms['#field_name'] = 'narrower_terms';
+      $narrower_terms['#title'] = 'More specific medical conditions';
+      $narrower_terms['#items'] = $ts_results['result']['rows'];
+      foreach ($ts_results['result']['rows'] as $key => $result) {
+        $narrower_terms[$key] = array(
+          '#markup' => l($result['pref_title'], 'disease/' . $result['pref_title']),
+        );
+      }
+    $node->content['narrower_terms'] = $narrower_terms;
+    }
+    
+    // Dbpedia
+    $dbpedia_sparql = "SELECT ?resource 
+                       WHERE { ?resource <http://dbpedia.org/property/meshid> '" . $mesh_id . "'@en  }";
+
+    $remote_options = array_merge($options,array('proxy_host' => '127.0.0.1','proxy_port' => 3128));
+       
+    
+    $ts_results = rdfx_sparql_request($dbpedia_sparql, DISEASELOOKUP_DBPEDIA_ENDPOINT, $remote_options);
+    
+    if (sizeof($ts_results['result']['rows'])> 0) {
+      $dbpedia_uri = $ts_results['result']['rows'][0]['resource'];
+      $retrieved_information = diseaselookup_rdf_get($dbpedia_uri);
+      $dbpedia_item = $retrieved_information[$dbpedia_uri];
+      // Add an abstract if there is on in english
+      if (isset($dbpedia_item['http://dbpedia.org/ontology/abstract'])) {
+        foreach ($dbpedia_item['http://dbpedia.org/ontology/abstract'] as $abstract_item) {
+          if ($abstract_item['lang'] == 'en') {
+            $abstract = $field_template;
+            $abstract['#field_name'] = 'abstract';
+            $abstract['#title'] = 'Description';
+            $abstract['#items'] = array(0);
+            $abstract[0] = array(
+              '#markup' => $abstract_item['value'],
+            );
+            $node->content['abstract']  = $abstract;
+          }
+        }
+      }
+      // Build an image if there is one.
+      // USE:
+      //xmlns.com/foaf/0.1/depiction
+      //dbpedia.org/property/caption
+      if (isset($dbpedia_item["http://dbpedia.org/ontology/thumbnail"])) {
+         $image = $field_template;
+         $image['#field_name'] = "depiction";
+         $image['#title'] = 'Depiction';
+         $image['#items'] = array(0);
+         $alt = '';
+         if (isset($dbpedia_item['http://dbpedia.org/property/caption'])) {
+           $alt = $dbpedia_item['http://dbpedia.org/property/caption'][0]['value'];
+         }
+         $image[0] = array(
+          '#theme' => 'image',
+          '#path' => $dbpedia_item['http://dbpedia.org/ontology/thumbnail'][0]['value'],
+          '#alt' =>  $alt,
+          '#attributes' => array('href' => $uri),
+          '#getsize' => FALSE
+         );
+         $node->content['depiction'] = $image;
+      } 
+
+      // Get info from wiwis diseasome
+      if (isset($dbpedia_item['http://www.w3.org/2002/07/owl#sameAs'])) {
+        // Loop through same as entries to find ones we are interested in. 
+        foreach ($dbpedia_item['http://www.w3.org/2002/07/owl#sameAs'] as $same_as_item) {
+          if (strpos($same_as_item['value'], "wiwiss.fu-berlin.de/diseasome/resource/diseases/")) {
+            diseaselookup_get_drugs(&$node, $same_as_item['value']);
+            diseaselookup_get_trials($node, $same_as_item['value']);
+          }
+        }
+      }
+
+      $tmg_sparql = "select * where {?s <http://purl.org/dc/terms/title> '" . $node->title . "'.
+                         ?uri <http://purl.org/dc/elements/1.1/subject> ?s.
+                          ?uri <http://purl.org/dc/terms/title> ?title.}";
+      
+      $ts_results = rdfx_sparql_request($tmg_sparql, "http://192.168.1.27:8890/sparql", $remote_options); 
+      //var_dump($ts_results);
+      
+      if (sizeof($ts_results['result']['rows'])> 0) { 
+        $innovations = $field_template;
+        $innovations['#field_name'] = "innovations";
+        $innovations['#title'] = 'Curated innovations';
+        $count = 0;
+        foreach ($ts_results['result']['rows'] as $innovation) {
+          //var_dump($innovation);
+          $innovations['#items'][] = 0;
+          $innovations[$count] = array(
+          '#markup' => l($innovation['title'], preg_replace("/(.*)\/innovation-/","http://semantic.test.tmg.co.uk/search/detail/Innovations/",$innovation['uri'])));
+          $count++;
+        }
+        $node->content['innovations'] = $innovations;
+      }
+    }
+  }  
+}
+
+/**
+ * Get links to known drugs for a paticular disease URI. 
+ * @param $node the node to add the drugs to.
+ * @param string $desease_information_uri the URI for the disease.
+ */
+function diseaselookup_get_drugs($node, $desease_information_uri) {
+  $drug_sparql = "SELECT DISTINCT ?drug ?label WHERE {
+  ?drug <http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/possibleDiseaseTarget> <" . $desease_information_uri . ">.
+  ?drug <http://www.w3.org/2000/01/rdf-schema#label> ?label} ";
+  
+  $options = array(
+    'format' => 'application/sparql-results+xml',
+    'output' => 'xml',
+    'proxy_host' => '127.0.0.1',
+    'proxy_port' => 3128,
+  );
+  
+  $ts_results = rdfx_sparql_request($drug_sparql, "http://www4.wiwiss.fu-berlin.de/drugbank/sparql", $options);
+
+  if (sizeof($ts_results['result']['rows']) > 0) {
+    $field =  array(
+     '#theme' => 'field',
+     '#weight' => 0,
+     '#title' => 'Possible Drugs',
+     '#field_translatable' => 0,  
+     '#label_display' => 'above',
+     '#field_name' => 'drugs',
+     '#field_type' => 'text',
+     '#entity_type' => 'node',
+     '#formatter' => 'text_default',
+     '#view_mode' => 'full',
+     '#language' => LANGUAGE_NONE,
+     '#object' => $node,
+     '#access' => TRUE,
+     '#bundle' => 'disease',
+    );
+    $count = 0;
+    foreach ($ts_results['result']['rows'] as $row) {
+      $field['#items'][] = 0;
+      $field[$count] = array(
+        '#markup' => l($row['label'], $row['drug'])
+      );
+      $count++; 
+    }
+    $node->content['drugs'] = $field;
+  }
+}
+
+/**
+ * Get known trial for a paticular disease:uri
+ * @param $node the node to add the content to
+ * @param string $disease_information_uri the uri of the disease.
+ */
+function diseaselookup_get_trials($node, $disease_information_uri) {
+  // First get the page from wiwiss as it has more refs to linkct than linkct contains.
+  $disease_infomation_rdf = diseaselookup_rdf_get($disease_information_uri);
+  
+  $options = array(
+    'format' => 'application/sparql-results+xml',
+    'output' => 'xml',
+    'proxy_host' => '127.0.0.1',
+    'proxy_port' => 3128,
+   );
+  
+  $disease_information = $disease_infomation_rdf[$disease_information_uri]; 
+
+  // Check sames as for links going to http://data.linkedct.org/resource/condition
+  $trials = array(); 
+  if (isset($disease_information['http://www.w3.org/2002/07/owl#sameAs'])) {
+    // Loop through same as entries to find ones we are interested in. 
+    foreach ($disease_information['http://www.w3.org/2002/07/owl#sameAs'] as $same_as_item) {
+      
+      if (strpos($same_as_item['value'], "data.linkedct.org/resource/condition")) {
+        $trial_sparql = "
+          SELECT * WHERE {
+          ?trial <http://data.linkedct.org/resource/linkedct/condition> <" . $same_as_item['value'] . ">.
+          ?trial <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://data.linkedct.org/resource/linkedct/trials>.
+          ?trial <http://data.linkedct.org/resource/linkedct/lastchanged_date> ?last_changed.
+          ?trial <http://data.linkedct.org/resource/linkedct/brief_title> ?title
+          }
+          ORDER BY desc(?last_changed) LIMIT 5";
+            
+        $ts_results = rdfx_sparql_request($trial_sparql, "http://data.linkedct.org/sparql?", $options);
+        if (sizeof($ts_results["result"]["rows"]) > 0) {
+          foreach ($ts_results["result"]["rows"] as $trial) {
+            $trials[$trial['trial']] = $trial['title']; 
+          }
+        }
+      }
+    }
+  }
+  // Build a field with the trials in 
+   if (sizeof($trials) > 0) {
+     $field =  array(
+       '#theme' => 'field',
+       '#weight' => 0,
+       '#title' => 'Recent Trials',
+       '#field_translatable' => 0,  
+       '#label_display' => 'above',
+       '#field_name' => 'trials',
+       '#field_type' => 'text',
+       '#entity_type' => 'node',
+       '#formatter' => 'text_default',
+       '#view_mode' => 'full',
+       '#language' => LANGUAGE_NONE,
+       '#object' => $node,
+       '#access' => TRUE,
+       '#bundle' => 'disease',
+     );
+    $count = 0;
+    foreach ($trials as $key => $label) {
+      $field['#items'][] = 0;
+      $field[$count] = array(
+        '#markup' => l($label, $key),
+      );
+      $count++; 
+    }
+    $node->content['trials'] = $field;
+  }
+}
+
+/**
+ * @defgroup diseaselookup_rdf_hooks
+ * @{
+ * Functions for defining the RDF output
+ */
+
+function diseaselookup_rdf_namespaces() {
+  return array(
+  'dbpedia-owl' => 'http://dbpedia.org/ontology/',
+  'tmgont' => 'http://purl.oclc.org/argot/health/2009/09/disease',
+  'og' => 'http://opengraphprotocol.org/schema/',
+  'fb' => 'http://www.facebook.com/2008/fbml',
+  'drugbank' => 'http://www4.wiwiss.fu-berlin.de/drugbank/resource/drugbank/',
+  'diseasome' => 'http://www4.wiwiss.fu-berlin.de/diseasome/resource/diseasome/',
+  'linkedct' => 'http://data.linkedct.org/resource/linkedct/',
+  
+  
+  
+  );
+}  
+
+function diseaselookup_rdf_mapping() {
+  return array(
+    array(
+      'type' => 'node',
+      'bundle' => 'disease',
+      'mapping' => array(
+        'rdftype' => array('owl:thing', 'dbpedia-owl:Disease', 'tmgont:DiseaseConcept', 'diseaseome:disease'),
+       'disease_uri' => array(
+         'predicates' => array('owl:sameAs'),
+         'datatype' => 'uri',
+         //'type' => 'rel',
+         'type' => 'property',
+         ),
+       'narrower_terms' => array(
+         'predicates' => array('skos:narrower'),
+         'datatype' => 'uri',
+         'type' => 'rel',
+         ),
+       'broader_terms' => array(
+         'predicates' => array('skos:broarder'),
+         'datatype' => 'uri',
+         'type' => 'rel',  
+         ),   
+        'title' => array(
+         'predicates' => array('og:title', 'dc:title'),
+        ),
+        'depiction' => array(
+         'predicates' => array('foaf:depiction'),
+         'type' => 'rel',
+         'datatype' => 'uri'
+        ),
+        'abstract' => array(
+          'predicates' => array('dbpedia-owl:abstract', 'dc:description'),
+          'type' => 'property'
+         
+        ),
+        'innovations' => array(
+         'predicates' => array('tmgont:relatedInnovation'),
+         'type' => 'rel',
+         'datatype' => 'uri'
+        ),
+        'drugs' => array(
+         'predicates' => array('diseasome:possibleDrug'),
+         'type' => 'rel',
+         'datatype' => 'uri'
+        ),
+        // Think this needs to be slightly different.
+        'trials' => array(
+         'predicates' => array('linkedct:condition'),
+         'type' => 'rel',
+         'datatype' => 'uri'
+         ),
+         'mesh' => array(
+          'predicates' => array('dc:mesh'),
+         ),
+      ),
+    ), 
+  );
+}
+
+/*
+ * }
+ */
+
+/**
+ * @defgroup diseaselookup_node_type_hooks
+ * @{
+ * Functions to define and use the node type
+ */
+
+/**
+ * Implementation of hook_node_info().
+ */
+
+function diseaselookup_node_info() {
+    return array(
+    'disease' => array(
+      'type' => 'disease',
+      'name' => t('disease node'),
+      'base' => 'diseaselookup',
+      'description' => "Disease node.",
+      'has_title' => TRUE,
+      'title_label' => TRUE,
+      'locked' => TRUE,
+    )
+  );
+}
+
+// TODO blank formatter.
+
+/**
+ * Implement hook_form() with the standard default form.
+ */
+function diseaselookup_form($node, $form_state) {
+  return node_content_form($node, $form_state);
+}
+
+
+
+
+
+/**
+ * @} End of defgroup diseaselookup_node_type_hooks
+ */
+
+/**
+ * Get a rdf file from a url and turn it into an RDF array.
+ * @param string $url the url of the item.
+ * @return an RDF array with the item contained.
+ */
+function diseaselookup_rdf_get($url) {
+  // TODO: some caching here if we are not using a proxy server
+  include_once(drupal_get_path('module', 'rdfx') . '/vendor/arc/ARC2.php');
+  $parser = ARC2::getRDFParser(array('proxy_host' => '127.0.0.1','proxy_port' => 3128,));
+  $parser->parse($url);
+  $retrieved_information = $parser->getSimpleIndex(0);
+  return $retrieved_information;
+}
+
+/** 
+ * @defgroup diseaselookup_field_definitions
+ * @{
+ * Functions to define field types needed for the diseaselookup module 
+ */
+
+/**
+ * Implements hook_field_formatter_info().
+ */
+function diseaselookup_field_formatter_info() {
+  return array(
+     'diseaselookup_uri' => array('label' => 'RDF URI',
+                                  'field types' => array('text', 'text_long'))
+  );
+}
+
+/**
+ * Implementation of hook_field_formatter_view()
+ */
+function diseaselookup_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  switch ($display['type']) {
+    case 'diseaselookup_uri':
+      foreach ($items as $delta => $item) {
+         $elements[$delta] = array(
+           '#theme' => 'diseaselookup_theme_uri',
+           '#data' => $item['value'],
+         );
+      }
+    break;
+  }
+  return $elements;
+}
+
+/** 
+ * Implementation of hook_theme().
+ */
+
+function diseaselookup_theme($existing, $type, $theme, $path) {
+  return array(
+    'diseaselookup_theme_uri' => array(
+      'variables' => array('data' => NULL),
+    )
+  );
+  
+}
+
+function theme_diseaselookup_theme_uri($variables) {
+  return l($variables['data'], $variables['data']);
+}
+
+/*
+ * @} End of defgroup diseaselookup_field_definitions
+ */
