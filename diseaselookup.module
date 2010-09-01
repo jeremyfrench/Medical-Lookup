@@ -9,7 +9,7 @@
  * @package diseaselookup.module
  */
 
-define("DISEASELOOKUP_ENDPOINT", "http://nic.frost.tmg.co.uk:8880/sparql/");
+define("DISEASELOOKUP_ENDPOINT", "http://drupal-semantic.test.tmg.co.uk:8880/sparql/");
 define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://DBpedia.org/sparql");
 //define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://nic.frost.tmg.co.uk:8880/proxy/dbpedia/");
 
@@ -36,6 +36,7 @@ function diseaselookup_menu() {
  */
 function diseaselookup_search_form() {
   drupal_add_library('system', 'ui.autocomplete');
+  drupal_add_js(array('diseaselookup' => array('mesh_ep_url' => DISEASELOOKUP_ENDPOINT)),array('type' => 'setting'));
   drupal_add_js(drupal_get_path("module", "diseaselookup") . '/js/diseaselookup.js');
   $form['search_field'] = array('#type' => 'textfield' );
  return $form;
