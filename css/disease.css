@@ -1,0 +1,40 @@
+@CHARSET "ISO-8859-1";
+
+.node-disease {
+	width: 100%;
+	position: relative;
+	} 
+
+.field-name-broader-terms, .field-name-narrower-terms  {
+	border: 1px solid black; 
+	padding: 5px;
+	margin: 5px;
+	}
+	
+ 	
+
+.field-label {
+	font-weight: bold;
+
+	}
+
+.field-name-broader-terms {
+width : 30%;
+float: left;
+}
+
+
+.field-name-narrower-terms {
+width: 30%;
+float: right;
+}
+
+.node-disease h2 {
+text-align: center;
+}
+
+.field-name-mesh {
+position: absolute;
+right: 5px;
+top: 5px;
+}

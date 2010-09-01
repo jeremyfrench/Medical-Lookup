@@ -13,6 +13,12 @@ define("DISEASELOOKUP_ENDPOINT", "http://drupal-semantic.test.tmg.co.uk:8880/spa
 define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://DBpedia.org/sparql");
 //define("DISEASELOOKUP_DBPEDIA_ENDPOINT", "http://nic.frost.tmg.co.uk:8880/proxy/dbpedia/");
 
+/* implementation of hook_init(). */
+function diseaselookup_init() {
+  drupal_add_css(drupal_get_path('module', 'diseaselookup') . '/css/disease.css', array('preprocess' => TRUE));
+}
+
+
 /**
  * Implementation of hook_menu().
  */
@@ -162,6 +168,7 @@ function diseaselookup_node_view($node, $view_mode) {
     $mesh['#field_name'] = "mesh";
     $mesh['#title'] = "MESH id";
     $mesh['#items'] = array(0);
+    $mesh['#label-display'] = 'inline';
     $mesh[0] = array( '#markup' => $mesh_id);
     $node->content['mesh'] = $mesh;
     $node->content['disease_uri']['#access'] = FALSE;
@@ -182,6 +189,7 @@ function diseaselookup_node_view($node, $view_mode) {
       $broader_terms['#field_name'] = 'broader_terms';
       $broader_terms['#title'] = 'More general medical conditions';
       $broader_terms['#items'] = $ts_results['result']['rows'];
+      $broader_terms['#weight'] = -1;
       foreach ($ts_results['result']['rows'] as $key => $result) {
         
         // Todo work out how to use theme link here
@@ -209,6 +217,7 @@ function diseaselookup_node_view($node, $view_mode) {
       $narrower_terms['#field_name'] = 'narrower_terms';
       $narrower_terms['#title'] = 'More specific medical conditions';
       $narrower_terms['#items'] = $ts_results['result']['rows'];
+      $narrower_terms['#weight'] = -1;
       foreach ($ts_results['result']['rows'] as $key => $result) {
         $narrower_terms[$key] = array(
           '#markup' => l($result['pref_title'], 'disease/' . $result['pref_title']),
@@ -253,6 +262,7 @@ function diseaselookup_node_view($node, $view_mode) {
          $image = $field_template;
          $image['#field_name'] = "depiction";
          $image['#title'] = 'Depiction';
+         $image['#weight'] = 5;
          $image['#items'] = array(0);
          $alt = '';
          if (isset($dbpedia_item['http://dbpedia.org/property/caption'])) {
@@ -290,6 +300,7 @@ function diseaselookup_node_view($node, $view_mode) {
         $innovations = $field_template;
         $innovations['#field_name'] = "innovations";
         $innovations['#title'] = 'Curated innovations';
+        $innovations['#weight'] = 15;
         $count = 0;
         foreach ($ts_results['result']['rows'] as $innovation) {
           //var_dump($innovation);
@@ -326,7 +337,7 @@ function diseaselookup_get_drugs($node, $desease_information_uri) {
   if (sizeof($ts_results['result']['rows']) > 0) {
     $field =  array(
      '#theme' => 'field',
-     '#weight' => 0,
+     '#weight' => 10,
      '#title' => 'Possible Drugs',
      '#field_translatable' => 0,  
      '#label_display' => 'above',
@@ -399,7 +410,7 @@ function diseaselookup_get_trials($node, $disease_information_uri) {
    if (sizeof($trials) > 0) {
      $field =  array(
        '#theme' => 'field',
-       '#weight' => 0,
+       '#weight' => 11,
        '#title' => 'Recent Trials',
        '#field_translatable' => 0,  
        '#label_display' => 'above',
@@ -470,7 +481,7 @@ function diseaselookup_rdf_mapping() {
          'type' => 'rel',  
          ),   
         'title' => array(
-         'predicates' => array('og:title', 'dc:title'),
+         'predicates' => array('og:title', 'dc:title', 'skos:prefLabel'),
         ),
         'depiction' => array(
          'predicates' => array('foaf:depiction'),
@@ -603,9 +614,15 @@ function diseaselookup_field_formatter_view($entity_type, $entity, $field, $inst
  */
 
 function diseaselookup_theme($existing, $type, $theme, $path) {
+  
   return array(
     'diseaselookup_theme_uri' => array(
       'variables' => array('data' => NULL),
+    ),
+    'node__disease' => array(
+      'render element' => 'elements',
+      'template' => 'node-disease',
+    
     )
   );
   
